@@ -66,6 +66,7 @@ def options(opt):
     opt.add_option('--libdir32', type='string', help="32bit Library directory [Default: <prefix>/lib32]")
     opt.add_option('--mandir', type='string', help="Manpage directory [Default: <prefix>/share/man/man1]")
     opt.add_option('--dbus', action='store_true', default=False, help='Enable D-Bus JACK (jackdbus)')
+    opt.add_option('--dist-target', type='string', default='auto', help='Specify the target for cross-compiling [auto,mingw]')
     opt.add_option('--classic', action='store_true', default=False, help='Force enable standard JACK (jackd) even if D-Bus JACK (jackdbus) is enabled too')
     opt.add_option('--doxygen', action='store_true', default=False, help='Enable build of doxygen documentation')
     opt.add_option('--profile', action='store_true', default=False, help='Build with engine profiling')
@@ -76,13 +77,18 @@ def options(opt):
     opt.add_option('--firewire', action='store_true', default=False, help='Enable FireWire driver (FFADO)')
     opt.add_option('--freebob', action='store_true', default=False, help='Enable FreeBob driver')
     opt.add_option('--alsa', action='store_true', default=False, help='Enable ALSA driver')
+    opt.add_option('--portaudio', action='store_true', default=False, help='Enable Portaudio driver')
+    opt.add_option('--winmme', action='store_true', default=False, help='Enable WinMME driver')
     opt.sub_options('dbus')
 
 def configure(conf):
     platform = sys.platform
-    conf.env['IS_MACOSX'] = platform == 'darwin'
-    conf.env['IS_LINUX'] = platform == 'linux' or platform == 'linux2' or platform == 'posix'
-    conf.env['IS_SUN'] = platform == 'sunos'
+    if Options.options.dist_target == 'auto':
+        conf.env['IS_MACOSX'] = platform == 'darwin'
+        conf.env['IS_LINUX'] = platform == 'linux' or platform == 'linux2' or platform == 'posix'
+        conf.env['IS_SUN'] = platform == 'sunos'
+    elif Options.options.dist_target == 'mingw':
+        conf.env['IS_WINDOWS'] = True
 
     if conf.env['IS_LINUX']:
         Logs.pprint('CYAN', "Linux detected")
@@ -92,6 +98,9 @@ def configure(conf):
 
     if conf.env['IS_SUN']:
         Logs.pprint('CYAN', "SunOS detected")
+
+    if conf.env['IS_WINDOWS']:
+        Logs.pprint('CYAN', "Windows detected")
 
     if conf.env['IS_LINUX']:
         conf.check_tool('compiler_cxx')
@@ -109,6 +118,12 @@ def configure(conf):
     #if conf.env['IS_SUN']:
     #   conf.check_tool('compiler_cxx')
     #   conf.check_tool('compiler_cc')
+
+    if conf.env['IS_WINDOWS']:
+        conf.check_tool('compiler_cxx')
+        conf.check_tool('compiler_cc')
+        conf.env.append_unique('CCDEFINES', '_POSIX')
+        conf.env.append_unique('CXXDEFINES', '_POSIX')
  
     conf.env.append_unique('CXXFLAGS', '-Wall')
     conf.env.append_unique('CCFLAGS', '-Wall')
@@ -125,6 +140,11 @@ def configure(conf):
         conf.env['BUILD_DRIVER_ALSA'] = Options.options.alsa
         conf.env['BUILD_DRIVER_FFADO'] = Options.options.firewire
         conf.env['BUILD_DRIVER_FREEBOB'] = Options.options.freebob
+    if conf.env['IS_WINDOWS']:
+        conf.sub_config('windows')
+        if Options.options.portaudio and not conf.env['BUILD_DRIVER_PORTAUDIO']:
+            conf.fatal('Portaudio driver was explicitly requested but cannot be built')
+        conf.env['BUILD_DRIVER_WINMME'] = Options.options.winmme
     if Options.options.dbus:
         conf.sub_config('dbus')
         if conf.env['BUILD_JACKDBUS'] != True:
@@ -185,6 +205,8 @@ def configure(conf):
     else:
         conf.env['BUILD_JACKD'] = True
 
+    conf.env['BINDIR'] = conf.env['PREFIX'] + '/bin'
+
     if Options.options.libdir:
         conf.env['LIBDIR'] = conf.env['PREFIX'] + Options.options.libdir
     else:
@@ -203,10 +225,20 @@ def configure(conf):
     conf.define('CLIENT_NUM', Options.options.clients)
     conf.define('PORT_NUM_FOR_CLIENT', Options.options.application_ports)
 
-    conf.env['ADDON_DIR'] = os.path.normpath(os.path.join(conf.env['LIBDIR'], 'jack'))
-    conf.define('ADDON_DIR', conf.env['ADDON_DIR'])
-    conf.define('JACK_LOCATION', os.path.normpath(os.path.join(conf.env['PREFIX'], 'bin')))
-    conf.define('USE_POSIX_SHM', 1)
+    if conf.env['IS_WINDOWS']:
+        # we define this in the environment to maintain compatability with
+        # existing install paths that use ADDON_DIR rather than have to
+        # have special cases for windows each time.
+        conf.env['ADDON_DIR'] = conf.env['BINDIR'] + '/jack'
+        # don't define ADDON_DIR in config.h, use the default 'jack' defined in
+        # windows/JackPlatformPlug_os.h
+    else:
+        conf.env['ADDON_DIR'] = os.path.normpath(os.path.join(conf.env['LIBDIR'], 'jack'))
+        conf.define('ADDON_DIR', conf.env['ADDON_DIR'])
+        conf.define('JACK_LOCATION', os.path.normpath(os.path.join(conf.env['PREFIX'], 'bin')))
+
+    if not conf.env['IS_WINDOWS']:
+        conf.define('USE_POSIX_SHM', 1)
     conf.define('JACKMP', 1)
     if conf.env['BUILD_JACKDBUS'] == True:
         conf.define('JACK_DBUS', 1)
@@ -273,6 +305,10 @@ def configure(conf):
         display_feature('Build with ALSA support', conf.env['BUILD_DRIVER_ALSA'] == True)
         display_feature('Build with FireWire (FreeBob) support', conf.env['BUILD_DRIVER_FREEBOB'] == True)
         display_feature('Build with FireWire (FFADO) support', conf.env['BUILD_DRIVER_FFADO'] == True)
+
+    if conf.env['IS_WINDOWS']:
+        display_feature('Build with WinMME support', conf.env['BUILD_DRIVER_WINMME'] == True)
+        display_feature('Build with Portaudio support', conf.env['BUILD_DRIVER_PORTAUDIO'] == True)
        
     if conf.env['BUILD_JACKDBUS'] == True:
         display_msg('D-Bus service install directory', conf.env['DBUS_SERVICES_DIR'], 'CYAN')
@@ -320,6 +356,11 @@ def build(bld):
         bld.add_subdirs('tests')
         if bld.env['BUILD_JACKDBUS'] == True:
             bld.add_subdirs('dbus')
+
+    if bld.env['IS_WINDOWS']:
+        bld.add_subdirs('windows')
+        #bld.add_subdirs('example-clients')
+        #bld.add_subdirs('tests')
 
     if bld.env['BUILD_DOXYGEN_DOCS'] == True:
         share_dir = bld.env.get_destdir() + bld.env['PREFIX'] + '/share/jack-audio-connection-kit'
