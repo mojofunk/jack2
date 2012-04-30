@@ -34,6 +34,10 @@ using namespace Jack;
 
 #if defined(_MSC_VER) || defined(__MINGW__) || defined(__MINGW32__)
 
+#ifndef SHGFP_TYPE_CURRENT
+#define SHGFP_TYPE_CURRENT 0
+#endif
+
 static char*
 find_path_to_jackdrc(char *path_to_jackdrc)
 {
